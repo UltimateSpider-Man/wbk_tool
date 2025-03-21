@@ -198,6 +198,17 @@ void WBK::read(std::filesystem::path path)
                 stream.read((char*)bdata.data(), samples_size);
                 tracks.push_back(DecodeImaAdpcm(bdata));
             }
+            else if (entry.codec == 4)
+            {
+                std::vector<uint8_t> bdata;
+                stream.seekg(entry.compressed_data_offs, std::ios::beg);
+                auto samples_size = entry.num_bytes;
+                if (entry.compressed_data_offs + size > actual_file_size)
+                    samples_size = actual_file_size - entry.compressed_data_offs;
+                bdata.resize(samples_size);
+                stream.read((char*)bdata.data(), samples_size);
+                tracks.push_back(DecodePS2ADPCM(bdata));
+            }
             // @todo: codecs 5 (BINK) and 4 remaining
             else
             {

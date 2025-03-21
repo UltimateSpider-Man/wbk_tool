@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include "ima_adpcm.h"
+#include "ps2_adpcm.h"
 
 struct WAV {
     struct WAVHeader {
