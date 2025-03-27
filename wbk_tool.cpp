@@ -36,27 +36,21 @@ int main(int argc, char** argv)
     if (strstr(argv[1], "-e")) {
         extract = true;
     } else if (strstr(argv[1], "-r")) {
-
-        std::string a(argv[3]);
-        std::size_t pos;
-        std::stoi(a, &pos);
-        if (pos == a.size()) {
+        if (std::filesystem::exists(argv[3])) {
+            replace_path = argv[3];
+        }
+        else {
             auto idx = atoi(argv[3]);
             if (idx > INT_MIN && idx < INT_MAX)
                 replace_idx = idx;
             else
                 printf("Invalid replacement index specified!\n");
         }
-        else {
-            if (!std::filesystem::exists(argv[3])) {
-                printf("Invalid replacement track path specified!\n");
-                return -1;
-            }
-            replace_path = a;
-        }
     } 
-    else
+    else {
+        printf("Invalid arguments specified!\n");
         return -1;
+    }
 
     WBK wbk;
     wbk.read(argv[2]);
@@ -66,7 +60,7 @@ int main(int argc, char** argv)
         size_t index = 0;
         for (auto& track : wbk.tracks) {
             WBK::nslWave& entry = wbk.entries[index];
-            fs::path output_path = std::string(argv[3]).append(std::to_string(index)).append(".wav");
+            fs::path output_path = fs::path(std::string(argv[3])) / std::to_string(index).append(".wav");
             WAV::writeWAV(output_path.string(), track, entry.samples_per_second / WBK::GetNumChannels(entry), WBK::GetNumChannels(entry));
             ++index;
         }
