@@ -27,6 +27,7 @@ public:
         int offs4;
         int num;
         int entry_desc_offs;
+        char padding[152];
     } header;
 
     struct metadata_t {
@@ -35,6 +36,7 @@ public:
         uint32_t unk_vals;
         float unk_fvals[6];
     };
+
     struct nslWave
     {
         int hash;
@@ -60,6 +62,8 @@ public:
     static int GetNumChannels(const nslWave& wave);
     static void SetNumChannels(nslWave& wave, int num_channels);
     static int GetNumSamples(const nslWave& wave);
+    static int GetDuration(const nslWave& wave);
+    static float GetDurationMs(const nslWave& wave);
 
     void read(std::filesystem::path path);
     void write(std::filesystem::path path);
@@ -73,10 +77,10 @@ private:
 inline int WBK::GetNumChannels(const nslWave& wave) {
     int num_channels = 0;
     if (wave.flags)
-        num_channels = (((((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) & 0x33)
-            + ((((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) >> 2) & 0x33)) & 0xF)
-        + (((((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) & 0x33)
-            + ((((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) >> 2) & 0x33)) >> 4);
+        num_channels = (((((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) & 0x33) +
+                        ((((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) >> 2) & 0x33)) & 0xF)   +
+                       (((((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) & 0x33) +
+                        ((((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) >> 2) & 0x33)) >> 4);
     else
         num_channels = 1;
     return num_channels;
@@ -87,6 +91,16 @@ inline void WBK::SetNumChannels(nslWave& wave, int num_channels) {
     for (int i = 0; i < num_channels; ++i)
         new_channel_bits |= (1 << i);
     wave.flags = (wave.flags & ~channel_mask) | new_channel_bits;
+}
+
+inline int WBK::GetDuration(const nslWave& wave)
+{
+    return 1000 * wave.num_bytes / wave.samples_per_second;
+}
+
+inline float WBK::GetDurationMs(const nslWave& wave)
+{
+    return WBK::GetDuration(wave) * 0.001;
 }
 
 inline int WBK::GetNumSamples(const nslWave& wave)
@@ -129,7 +143,7 @@ void WBK::read(std::filesystem::path path)
         // read all entries
         for (int index = 0; index < header.num_entries; ++index) {
             nslWave entry;
-            stream.seekg(0x100 + (sizeof nslWave * index), std::ios::beg);
+            stream.seekg(sizeof header_t + (sizeof nslWave * index), std::ios::beg);
             stream.read(reinterpret_cast<char*>(&entry), sizeof nslWave);
 
             // calc bits per sample & blockAlign
@@ -171,7 +185,7 @@ void WBK::read(std::filesystem::path path)
                 entry.hash, entry.codec,
                 GetNumSamples(entry), GetNumChannels(entry),
                 entry.samples_per_second, bits_per_sample,
-                (float)GetNumSamples(entry) / entry.samples_per_second, entry.compressed_data_offs);
+                GetDurationMs(entry), entry.compressed_data_offs);
 
             // PCM(?)
             if (entry.codec == 1 || entry.codec == 2) {
@@ -245,25 +259,31 @@ bool WBK::replace(int replacement_index, const WAV& wav)
     if (replacement_index < 0 || replacement_index >= header.num_entries)
         return false;
 
+    // copy everything from the original up until the track data we want to replace
     std::vector<uint8_t> new_raw_data(raw_data.begin(), raw_data.begin() + entries[replacement_index].compressed_data_offs);
     
+    // encode
     auto samples = wav.samples;
-
     auto encoded_adpcm = EncodeImaAdpcm(samples);
+
+    // calc the next available data offset
     size_t current_data_offset = entries[replacement_index].compressed_data_offs;
     size_t next_data_offset = (current_data_offset + encoded_adpcm.size() + 0x7FFF) & ~0x7FFF;
 
+    // adjust the replacement track info
     nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[0x100 + (sizeof(nslWave) * replacement_index)]);
     entry.num_bytes = encoded_adpcm.size();
     entry.num_samples = wav.samples.size() / wav.header.numChannels;
     entry.samples_per_second = wav.header.sampleRate;
     SetNumChannels(entry, wav.header.numChannels);
 
+    // 
     new_raw_data.insert(new_raw_data.end(), encoded_adpcm.begin(), encoded_adpcm.end());
     size_t padding_size = next_data_offset - (current_data_offset + encoded_adpcm.size());
     new_raw_data.insert(new_raw_data.end(), padding_size, 0x00);
 
-    for (int index = replacement_index + 1; index < header.num_entries; ++index) {
+    for (int index = replacement_index + 1; index < header.num_entries; ++index) 
+    {
         nslWave& new_entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[0x100 + (sizeof(nslWave) * index)]);
 
         size_t data_start = entries[index].compressed_data_offs;
