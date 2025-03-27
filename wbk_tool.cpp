@@ -30,21 +30,37 @@ int main(int argc, char** argv)
     }
     
     bool extract = false;
-    int replace_idx = -1;
+    int replace_idx = 0;
+    std::filesystem::path replace_path;
+
     if (strstr(argv[1], "-e")) {
         extract = true;
     } else if (strstr(argv[1], "-r")) {
-        auto idx = atoi(argv[3]);
-        if (idx > INT_MIN && idx < INT_MAX)
-            replace_idx = idx;
-        else 
-            printf("Invalid replacement index specified!\n");
+
+        std::string a(argv[3]);
+        std::size_t pos;
+        std::stoi(a, &pos);
+        if (pos == a.size()) {
+            auto idx = atoi(argv[3]);
+            if (idx > INT_MIN && idx < INT_MAX)
+                replace_idx = idx;
+            else
+                printf("Invalid replacement index specified!\n");
+        }
+        else {
+            if (!std::filesystem::exists(argv[3])) {
+                printf("Invalid replacement track path specified!\n");
+                return -1;
+            }
+            replace_path = a;
+        }
     } 
     else
         return -1;
 
     WBK wbk;
     wbk.read(argv[2]);
+
     if (extract)
     {
         size_t index = 0;
@@ -57,20 +73,50 @@ int main(int argc, char** argv)
         return 1;
     }
     else {
-        if (replace_idx > wbk.header.num_entries)
+        bool modified = false;
+        if (replace_path.empty() && replace_idx > wbk.header.num_entries) {
             printf("Invalid replacement index specified!\n");
-        else
-        {
-            WAV replacement_wav;
-            if (replacement_wav.readWAV(argv[4])) {
-                if (wbk.replace(replace_idx, replacement_wav))
-                {
-                    fs::path path = fs::path(std::string(argv[2])).replace_extension(".new.wbk").string();
-                    wbk.write(path);
-                    printf("Replaced index %d and written to %s\n", replace_idx, path.string().c_str());
+        }
+        else {
+            if (!replace_path.empty()) {
+                auto successes = 0;
+                for (size_t i = 0; i < wbk.entries.size(); ++i) {
+                    fs::path wav_file = replace_path / (std::to_string(i) + ".wav");
+
+                    if (fs::exists(wav_file)) {
+                        WAV replacement_wav;
+                        if (replacement_wav.readWAV(wav_file.string())) {
+                            if (wbk.replace(i, replacement_wav)) {
+                                printf("Replaced index %d\n", i);
+                                modified = true;
+                                successes++;
+                            }
+                            else
+                                printf("Failed to replace index %d!\n", i);
+                        }
+                    } 
+                    else
+                        printf("Replacement track not found for index %d!\n", i);
+                }
+                printf("Replaced %d/%d entries\n", successes, wbk.entries.size());
+            }
+            else {
+                WAV replacement_wav;
+                if (replacement_wav.readWAV(argv[4])) {
+                    if (wbk.replace(replace_idx, replacement_wav)) {
+                        modified = true;
+                        printf("Replaced index %d\n", replace_idx);
+                    }
                 }
             }
         }
+        
+        if (modified) {
+            fs::path path = fs::path(std::string(argv[2])).replace_extension(".new.wbk").string();
+            wbk.write(path);
+            printf("Written to %s\n", path.string().c_str());
+        }
     }
+
     return 1;
 }
