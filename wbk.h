@@ -269,7 +269,7 @@ bool WBK::replace(int replacement_index, const WAV& wav, bool keep_codec)
     auto samples = wav.samples;
     std::vector<char> encoded_samples;
     if (keep_codec)     // @todo
-        EncodeImaAdpcm(samples);
+        encoded_samples = EncodeImaAdpcm(samples);
 
     // calc the next available data offset and adjust the replacement track info
     size_t current_data_offset = entries[replacement_index].compressed_data_offs;
