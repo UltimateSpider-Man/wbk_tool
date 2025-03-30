@@ -67,7 +67,7 @@ public:
 
     void read(std::filesystem::path path);
     void write(std::filesystem::path path);
-    bool replace(int replacement_index, const WAV& wav);
+    bool replace(int replacement_index, const WAV& wav, bool keep_codec = true);
 
 private:
     std::vector<uint8_t> raw_data;
@@ -254,45 +254,60 @@ void WBK::write(std::filesystem::path path) {
 
 
 
-bool WBK::replace(int replacement_index, const WAV& wav)
+bool WBK::replace(int replacement_index, const WAV& wav, bool keep_codec)
 {
-    if (replacement_index < 0 || replacement_index >= header.num_entries)
+    if (replacement_index < 0 || replacement_index > header.num_entries)
         return false;
+
+    if (replacement_index > 0)
+        replacement_index--;
 
     // copy everything from the original up until the track data we want to replace
     std::vector<uint8_t> new_raw_data(raw_data.begin(), raw_data.begin() + entries[replacement_index].compressed_data_offs);
     
     // encode
     auto samples = wav.samples;
-    auto encoded_adpcm = EncodeImaAdpcm(samples);
+    std::vector<char> encoded_samples;
+    if (keep_codec)     // @todo
+        EncodeImaAdpcm(samples);
 
-    // calc the next available data offset
+    // calc the next available data offset and adjust the replacement track info
     size_t current_data_offset = entries[replacement_index].compressed_data_offs;
-    size_t next_data_offset = (current_data_offset + encoded_adpcm.size() + 0x7FFF) & ~0x7FFF;
+    size_t next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
 
-    // adjust the replacement track info
-    nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[0x100 + (sizeof(nslWave) * replacement_index)]);
-    entry.num_bytes = encoded_adpcm.size();
+    nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof header_t + (sizeof(nslWave) * replacement_index)]);
+    entry.num_bytes = encoded_samples.size();
     entry.num_samples = wav.samples.size() / wav.header.numChannels;
     entry.samples_per_second = wav.header.sampleRate;
     SetNumChannels(entry, wav.header.numChannels);
 
-    // 
-    new_raw_data.insert(new_raw_data.end(), encoded_adpcm.begin(), encoded_adpcm.end());
-    size_t padding_size = next_data_offset - (current_data_offset + encoded_adpcm.size());
+    // pad out the data to the next offset with zeroes
+    new_raw_data.insert(new_raw_data.end(), encoded_samples.begin(), encoded_samples.end());
+    size_t padding_size = next_data_offset - (current_data_offset + encoded_samples.size());
     new_raw_data.insert(new_raw_data.end(), padding_size, 0x00);
 
-    for (int index = replacement_index + 1; index < header.num_entries; ++index) 
+    // for each entry after the replaced one, we insert it at the right location and modify its start offset.
+    size_t current_offset = next_data_offset;
+    for (int index = replacement_index + 1; index < header.num_entries; ++index)
     {
-        nslWave& new_entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[0x100 + (sizeof(nslWave) * index)]);
+        nslWave& new_entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof header_t + (sizeof(nslWave) * index)]);
 
         size_t data_start = entries[index].compressed_data_offs;
-        size_t data_end = data_start + entries[index].num_bytes;
-        new_entry.compressed_data_offs = data_start;
+        size_t data_end = (index + 1 < header.num_entries)
+                        ? entries[index + 1].compressed_data_offs
+                        : raw_data.size();
+        size_t data_size = data_end - data_start;
 
+        new_entry.compressed_data_offs = current_offset;
         new_raw_data.insert(new_raw_data.end(), raw_data.begin() + data_start, raw_data.begin() + data_end);
+
+        // re-align
+        current_offset = (current_offset + data_size + 0x7FFF) & ~0x7FFF;
+        size_t padding = current_offset - new_raw_data.size();
+        new_raw_data.insert(new_raw_data.end(), padding, 0x00);
     }
 
+    // update the total bytes
     header_t& p_header = *reinterpret_cast<header_t*>(&new_raw_data.data()[0]);
     p_header.total_bytes = new_raw_data.size();
     raw_data = std::move(new_raw_data);
