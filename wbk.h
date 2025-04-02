@@ -62,6 +62,7 @@ public:
     static int GetNumChannels(const nslWave& wave);
     static void SetNumChannels(nslWave& wave, int num_channels);
     static int GetNumSamples(const nslWave& wave);
+    static void SetNumSamples(nslWave& wave, int num_samples);
     static int GetDuration(const nslWave& wave);
     static float GetDurationMs(const nslWave& wave);
 
@@ -125,6 +126,30 @@ inline int WBK::GetNumSamples(const nslWave& wave)
     }
     else
         return wave.num_samples;
+}
+
+#include <bitset>
+inline void WBK::SetNumSamples(nslWave& wave, int num_samples)
+{
+    int active_channels = std::bitset<8>(wave.flags).count();
+    if (wave.codec == 1)
+    {
+        if (active_channels > 0)
+            wave.num_bytes = num_samples / active_channels;
+        else
+            wave.num_bytes = num_samples;
+    }
+    else if (wave.codec == 2)
+    {
+        if (active_channels > 0)
+            wave.num_bytes = num_samples / (2 * active_channels);
+        else
+            wave.num_bytes = num_samples / 2;
+    }
+    else
+    {
+        wave.num_samples = num_samples;
+    }
 }
 
 void WBK::read(std::filesystem::path path)
@@ -276,10 +301,11 @@ bool WBK::replace(int replacement_index, const WAV& wav, bool keep_codec)
     size_t next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
 
     nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof header_t + (sizeof(nslWave) * replacement_index)]);
-    entry.num_bytes = encoded_samples.size();
-    entry.num_samples = wav.samples.size() / wav.header.numChannels;
-    entry.samples_per_second = wav.header.sampleRate;
+    //entry.num_bytes = encoded_samples.size();
+    //entry.num_samples = wav.samples.size() / wav.header.numChannels;
     SetNumChannels(entry, wav.header.numChannels);
+    SetNumSamples(entry, encoded_samples.size() * 2);
+    entry.samples_per_second = wav.header.sampleRate;
 
     // pad out the data to the next offset with zeroes
     new_raw_data.insert(new_raw_data.end(), encoded_samples.begin(), encoded_samples.end());
