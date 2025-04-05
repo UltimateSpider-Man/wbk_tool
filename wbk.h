@@ -73,7 +73,7 @@ public:
 
     static int GetNumChannels(const nslWave& wave);
     static void SetNumChannels(nslWave& wave, int num_channels);
-    static int GetNumSamples(const nslWave& wave);
+    int GetNumSamples(const nslWave& wave);
     static void SetNumSamples(nslWave& wave, int num_samples);
     static int GetDuration(const nslWave& wave);
     static double GetDurationMs(const nslWave& wave);
@@ -116,7 +116,7 @@ inline double WBK::GetDurationMs(const nslWave& wave)
     return WBK::GetDuration(wave) * 0.001;
 }
 
-inline int WBK::GetNumSamples(const nslWave& wave)
+int WBK::GetNumSamples(const nslWave& wave)
 {
     unsigned int tmp_flag = (unsigned __int8)((((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) & 0x33) +
         (((unsigned __int8)((wave.flags & 0x55) + ((wave.flags >> 1) & 0x55)) >> 2) & 0x33));
@@ -141,7 +141,7 @@ inline int WBK::GetNumSamples(const nslWave& wave)
 }
 
 #include <bitset>
-inline void WBK::SetNumSamples(nslWave& wave, int num_samples)
+void WBK::SetNumSamples(nslWave& wave, int num_samples)
 {
     int active_channels = (int)std::bitset<8>(wave.flags).count();
     if (wave.codec == 1)
@@ -237,39 +237,22 @@ void WBK::read(std::filesystem::path path)
                 }
                 tracks.push_back(tmp);
             }
-            else if (entry.codec == ADPCM_1)
-            {
-                std::vector<uint8_t> bdata;
-                stream.seekg(entry.compressed_data_offs, std::ios::beg);
-                auto samples_size = entry.num_bytes;    // @todo: codecs
-                if (entry.compressed_data_offs + size > actual_file_size)
-                    samples_size = actual_file_size - entry.compressed_data_offs;
-                bdata.resize(samples_size);
-                stream.read((char*)bdata.data(), samples_size);
-                throw new std::runtime_error("TODO");
-            }
-            else if (entry.codec == ADPCM_2)
-            {
-                std::vector<uint8_t> bdata;
-                stream.seekg(entry.compressed_data_offs, std::ios::beg);
-                auto samples_size = entry.num_bytes;    // @todo: codecs
-                if (entry.compressed_data_offs + size > actual_file_size)
-                    samples_size = actual_file_size - entry.compressed_data_offs;
-                bdata.resize(samples_size);
-                stream.read((char*)bdata.data(), samples_size);
-                int num_channels = 1;
-                throw new std::runtime_error("TODO");
-            }
-            else if (entry.codec == IMA_ADPCM)
-            {
-                std::vector<uint8_t> bdata;
-                stream.seekg(entry.compressed_data_offs, std::ios::beg);
+            else if (entry.codec >= Reserved && entry.codec <= IMA_ADPCM) {
+                if (entry.codec == ADPCM_2)
+                    SetNumChannels(entry, 1);
 
+                std::vector<uint8_t> bdata;
+                stream.seekg(entry.compressed_data_offs, std::ios::beg);
                 auto samples_size = entry.num_bytes;
                 bdata.resize(samples_size);
                 stream.read((char*)bdata.data(), samples_size);
 
-                auto decoded_samples = DecodeImaAdpcm(bdata, GetNumChannels(entry));
+                std::vector<int16_t> decoded_samples;                
+                switch (entry.codec) {
+                    case IMA_ADPCM:
+                        decoded_samples = DecodeImaAdpcm(bdata, GetNumChannels(entry));
+                        break;
+                }
                 tracks.push_back(decoded_samples);
             }
             else
