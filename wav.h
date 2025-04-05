@@ -52,14 +52,14 @@ struct WAV {
         }
         return true;
     }
-    static void writeWAV(const std::string& filename, const std::vector<int16_t>& samples, uint32_t sampleRate, int nchannels = 1) {
+    static void writeWAV(const std::string& filename, std::vector<int16_t>& samples, uint32_t sampleRate, int nchannels = 1) {
         WAVHeader header;
         header.sampleRate = sampleRate;
         header.numChannels = nchannels;
         header.bitsPerSample = 16;
-        header.blockAlign = header.numChannels * (header.bitsPerSample / 8);
+        header.blockAlign = (header.bitsPerSample * header.numChannels) / 8;
         header.byteRate = header.sampleRate * header.blockAlign;
-        header.subchunk2Size = samples.size() * sizeof(int16_t);
+        header.subchunk2Size = (int)samples.size() * sizeof(int16_t);
         header.chunkSize = 36 + header.subchunk2Size;
 
         std::ofstream outFile(filename, std::ios::binary);

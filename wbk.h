@@ -11,6 +11,18 @@
 
 class WBK {
 public:
+    enum Codec : uint8_t {
+        Keep,
+
+        PCM,
+        PCM2,
+        Reserved,
+        Reserved1,
+        Reserved2,
+        Reserved3,
+        IMA_ADPCM
+    };
+
     struct header_t {
         char magic[8];
         char unk[8];
@@ -31,7 +43,7 @@ public:
     } header;
 
     struct metadata_t {
-        char codec;
+        Codec codec;
         char flags[3];
         uint32_t unk_vals;
         float unk_fvals[6];
@@ -40,7 +52,7 @@ public:
     struct nslWave
     {
         int hash;
-        unsigned char codec;
+        Codec codec;
         char field_5;
         unsigned char flags;
         char field_7;
@@ -64,11 +76,11 @@ public:
     static int GetNumSamples(const nslWave& wave);
     static void SetNumSamples(nslWave& wave, int num_samples);
     static int GetDuration(const nslWave& wave);
-    static float GetDurationMs(const nslWave& wave);
+    static double GetDurationMs(const nslWave& wave);
 
     void read(std::filesystem::path path);
     void write(std::filesystem::path path);
-    bool replace(int replacement_index, const WAV& wav, bool keep_codec = true);
+    bool replace(int replacement_index, const WAV& wav, Codec codec = Keep);
 
 private:
     std::vector<uint8_t> raw_data;
@@ -99,7 +111,7 @@ inline int WBK::GetDuration(const nslWave& wave)
     return 1000 * wave.num_bytes / wave.samples_per_second;
 }
 
-inline float WBK::GetDurationMs(const nslWave& wave)
+inline double WBK::GetDurationMs(const nslWave& wave)
 {
     return WBK::GetDuration(wave) * 0.001;
 }
@@ -131,7 +143,7 @@ inline int WBK::GetNumSamples(const nslWave& wave)
 #include <bitset>
 inline void WBK::SetNumSamples(nslWave& wave, int num_samples)
 {
-    int active_channels = std::bitset<8>(wave.flags).count();
+    int active_channels = (int)std::bitset<8>(wave.flags).count();
     if (wave.codec == 1)
     {
         if (active_channels > 0)
@@ -165,29 +177,38 @@ void WBK::read(std::filesystem::path path)
         stream.seekg(0, std::ios::beg);
         stream.read(reinterpret_cast<char*>(&header), sizeof header_t);
 
+
         // read all entries
-        for (int index = 0; index < header.num_entries; ++index) {
+        int32_t index;
+        for (index = 0; index < header.num_entries; ++index) {
             nslWave entry;
             stream.seekg(sizeof header_t + (sizeof nslWave * index), std::ios::beg);
             stream.read(reinterpret_cast<char*>(&entry), sizeof nslWave);
+            entries.push_back(entry);
+        }
+
+        // decode & process each track
+        index = 0;
+        for (auto& entry : entries) {
+            ++index;
 
             // calc bits per sample & blockAlign
             int bits_per_sample = 0;
             int size = 0;
             int blockAlign = 0;
-            if (entry.codec == 1 || entry.codec == 2) {
-                bits_per_sample = 8 * (entry.codec != 1) + 8;
+            if (entry.codec == PCM || entry.codec == PCM2) {
+                bits_per_sample = 8 * (entry.codec != PCM) + 8;
                 blockAlign = (GetNumChannels(entry) * bits_per_sample) / 8;
             }
-            else if (entry.codec == 4) {
+            else if (entry.codec == Reserved1) {
                 bits_per_sample = 16;
                 blockAlign = (bits_per_sample * GetNumChannels(entry)) / 8;
             }
-            else if (entry.codec == 5) {
+            else if (entry.codec == Reserved2) {
                 bits_per_sample = 4;
                 blockAlign = 36 * GetNumChannels(entry);
             }
-            else if (entry.codec == 7) {
+            else if (entry.codec == IMA_ADPCM) {
                 bits_per_sample = 16;
                 blockAlign = (bits_per_sample * GetNumChannels(entry)) / 8;
             }
@@ -206,14 +227,13 @@ void WBK::read(std::filesystem::path path)
             else
                 size = 2 * entry.num_bytes;
 
-            printf("[%d] Hash: 0x%08X codec=%d num_samples=%d num_channels=%d rate=%dHz bps=%d length=%fs offs=0x%X\n", index + 1,
+            printf("[%d] Hash: 0x%08X codec=%d num_samples=%d num_channels=%d rate=%dHz bps=%d length=%fs offs=0x%X\n", index,
                 entry.hash, entry.codec,
                 GetNumSamples(entry), GetNumChannels(entry),
                 entry.samples_per_second, bits_per_sample,
                 GetDurationMs(entry), entry.compressed_data_offs);
 
-            // PCM(?)
-            if (entry.codec == 1 || entry.codec == 2) {
+            if (entry.codec == PCM || entry.codec == PCM2) {
                 stream.seekg(0x1000, std::ios::beg);
                 std::vector<int16_t> tmp;
                 for (int i = 0; i < size / 4; ++i) {
@@ -225,26 +245,23 @@ void WBK::read(std::filesystem::path path)
                 }
                 tracks.push_back(tmp);
             }
-            // IMA ADPCM
-            else if (entry.codec == 7)
+            else if (entry.codec == IMA_ADPCM)
             {
                 std::vector<uint8_t> bdata;
                 stream.seekg(entry.compressed_data_offs, std::ios::beg);
+
                 auto samples_size = entry.num_bytes;
-                if (entry.compressed_data_offs + size > actual_file_size)
-                    samples_size = actual_file_size - entry.compressed_data_offs;
                 bdata.resize(samples_size);
                 stream.read((char*)bdata.data(), samples_size);
-                tracks.push_back(DecodeImaAdpcm(bdata));
+                tracks.push_back(DecodeImaAdpcm(bdata, GetNumChannels(entry)));
             }
-            // @todo: codecs 5 (BINK) and 4 remaining
             else
             {
                 printf("Unsupported codec (%d)!\n", entry.codec);
             }
             entries.push_back(entry);
         }
-
+        
         // read metadata
         if (header.metadata_offs) {
             size_t num_metadata = (header.entry_desc_offs - header.metadata_offs) / sizeof metadata_t;
@@ -277,9 +294,7 @@ void WBK::write(std::filesystem::path path) {
     }
 }
 
-
-
-bool WBK::replace(int replacement_index, const WAV& wav, bool keep_codec)
+bool WBK::replace(int replacement_index, const WAV& wav, Codec codec)
 {
     if (replacement_index < 0 || replacement_index > header.num_entries)
         return false;
@@ -292,28 +307,34 @@ bool WBK::replace(int replacement_index, const WAV& wav, bool keep_codec)
     
     // encode
     auto samples = wav.samples;
-    std::vector<char> encoded_samples;
-    if (keep_codec)     // @todo
-        encoded_samples = EncodeImaAdpcm(samples);
+    std::vector<uint8_t> encoded_samples;
+    if (codec == Keep)      // @todo - choose new codec
+        encoded_samples = wav.header.numChannels == 1 ? EncodeImaAdpcmMono(samples) : EncodeImaAdpcmStereo(samples);
 
     // calc the next available data offset and adjust the replacement track info
-    size_t current_data_offset = entries[replacement_index].compressed_data_offs;
-    size_t next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
+    int current_data_offset = entries[replacement_index].compressed_data_offs;
+    int next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
+    nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof(header_t) + (sizeof(nslWave) * replacement_index)]);
 
-    nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof header_t + (sizeof(nslWave) * replacement_index)]);
-    //entry.num_bytes = encoded_samples.size();
-    //entry.num_samples = wav.samples.size() / wav.header.numChannels;
-    SetNumChannels(entry, wav.header.numChannels);
-    SetNumSamples(entry, encoded_samples.size() * 2);
-    entry.samples_per_second = wav.header.sampleRate;
+    const auto wav_channels = wav.header.numChannels;
+    if (GetNumChannels(entry) != wav_channels)
+        SetNumChannels(entry, wav_channels);
 
-    // pad out the data to the next offset with zeroes
-    new_raw_data.insert(new_raw_data.end(), encoded_samples.begin(), encoded_samples.end());
-    size_t padding_size = next_data_offset - (current_data_offset + encoded_samples.size());
-    new_raw_data.insert(new_raw_data.end(), padding_size, 0x00);
+    const auto wav_sample_rate = wav.header.sampleRate;
+    if (entry.samples_per_second != wav_sample_rate)
+        entry.samples_per_second = wav_sample_rate;
+
+    entry.compressed_data_offs = current_data_offset;
+
+    // insert the new track samples
+    new_raw_data.insert(new_raw_data.end(),
+        reinterpret_cast<const uint8_t*>(encoded_samples.data()),
+        reinterpret_cast<const uint8_t*>(encoded_samples.data() + encoded_samples.size()));
+    size_t padding = next_data_offset - (current_data_offset + encoded_samples.size());
+    new_raw_data.insert(new_raw_data.end(), padding, 0x00);
 
     // for each entry after the replaced one, we insert it at the right location and modify its start offset.
-    size_t current_offset = next_data_offset;
+    current_data_offset = next_data_offset;
     for (int index = replacement_index + 1; index < header.num_entries; ++index)
     {
         nslWave& new_entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof header_t + (sizeof(nslWave) * index)]);
@@ -324,18 +345,18 @@ bool WBK::replace(int replacement_index, const WAV& wav, bool keep_codec)
                         : raw_data.size();
         size_t data_size = data_end - data_start;
 
-        new_entry.compressed_data_offs = current_offset;
+        new_entry.compressed_data_offs = current_data_offset;
         new_raw_data.insert(new_raw_data.end(), raw_data.begin() + data_start, raw_data.begin() + data_end);
 
         // re-align
-        current_offset = (current_offset + data_size + 0x7FFF) & ~0x7FFF;
-        size_t padding = current_offset - new_raw_data.size();
+        current_data_offset = (current_data_offset + data_size + 0x7FFF) & ~0x7FFF;
+        padding = current_data_offset - new_raw_data.size();
         new_raw_data.insert(new_raw_data.end(), padding, 0x00);
     }
 
     // update the total bytes
     header_t& p_header = *reinterpret_cast<header_t*>(&new_raw_data.data()[0]);
-    p_header.total_bytes = new_raw_data.size();
+    p_header.total_bytes = (int)new_raw_data.size();
     raw_data = std::move(new_raw_data);
 
     return true;

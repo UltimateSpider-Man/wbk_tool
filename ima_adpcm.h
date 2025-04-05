@@ -20,115 +20,180 @@ const int indexTable[16] = {
 };
 
 // taken from ALSA
-static std::vector<char> EncodeImaAdpcm(std::vector<uint8_t>& rawData)
+static std::vector<uint8_t> EncodeImaAdpcmMono(std::vector<uint8_t>& rawData)
 {
     auto conv = [](const std::vector<uint8_t>& rawBytes) -> std::vector<int16_t> {
         std::vector<int16_t> pcmSamples;
-        for (size_t i = 0; i < rawBytes.size(); i += 2) {
-            pcmSamples.push_back((int16_t)rawBytes[i] | (rawBytes[i + 1] << 8));
+        for (size_t i = 0; i + 1 < rawBytes.size(); i += 2) {
+            pcmSamples.push_back((int16_t)(rawBytes[i] | (rawBytes[i + 1] << 8)));
         }
         return pcmSamples;
     };
-    std::vector<int16_t> samples = conv(rawData);
 
-    std::vector<char> outBuff;
-    ImaAdpcmState state;
+    std::vector<int16_t> samples = conv(rawData);
+    std::vector<uint8_t> outBuff;
+
+    ImaAdpcmState state = { 0, 0 };
+    bool hasHighNibble = false;
+    uint8_t nibbleBuffer = 0;
+
     for (auto sl : samples) {
-        short diff;		/* Difference between sl and predicted sample */
-        short pred_diff;	/* Predicted difference to next sample */
-        unsigned char sign;	/* sign of diff */
-        short step;		/* holds previous StepSize value */
-        unsigned char adjust_idx;	/* Index to IndexAdjust lookup table */
-        int i;
-        /* Compute difference to previous predicted value */
-        diff = sl - state.valprev;
-        sign = (diff < 0) ? 0x8 : 0x0;
-        if (sign) {
-            diff = -diff;
-        }
-        /*
-         * This code *approximately* computes:
-         *    adjust_idx = diff * 4 / step;
-         *    pred_diff = (adjust_idx + 0.5) * step / 4;
-         *
-         * But in shift step bits are dropped. The net result of this is
-         * that even if you have fast mul/div hardware you cannot put it to
-         * good use since the fix-up would be too expensive.
-         */
-        step = stepsizeTable[state.index];
-        /* Divide and clamp */
-        pred_diff = step >> 3;
-        for (adjust_idx = 0, i = 0x4; i; i >>= 1, step >>= 1) {
+        short diff = sl - state.valprev;
+        unsigned char sign = (diff < 0) ? 0x8 : 0x0;
+        if (sign) diff = -diff;
+
+        short step = stepsizeTable[state.index];
+        short pred_diff = step >> 3;
+
+        unsigned char adjust_idx = 0;
+        for (int i = 0x4; i; i >>= 1, step >>= 1) {
             if (diff >= step) {
                 adjust_idx |= i;
                 diff -= step;
                 pred_diff += step;
             }
         }
-        /* Update and clamp previous predicted value */
+
         state.valprev += sign ? -pred_diff : pred_diff;
-        if (state.valprev > 32767) {
-            state.valprev = 32767;
-        }
-        else if (state.valprev < -32768) {
-            state.valprev = -32768;
-        }
-        /* Update and clamp StepSize lookup table index */
+        state.valprev = std::clamp(state.valprev, -32768, 32767);
+
         state.index += indexTable[adjust_idx];
-        if (state.index < 0) {
-            state.index = 0;
+        state.index = std::clamp(state.index, 0, 88);
+
+        uint8_t nibble = sign | adjust_idx;
+        if (!hasHighNibble) {
+            nibbleBuffer = nibble & 0x0F;
+            hasHighNibble = true;
+        } else {
+            nibbleBuffer |= (nibble << 4);
+            outBuff.push_back(nibbleBuffer);
+            hasHighNibble = false;
         }
-        else if (state.index > 88) {
-            state.index = 88;
-        }
-        int8_t b = sign | adjust_idx;
-        outBuff.push_back(b);
     }
+
+    if (hasHighNibble)
+        outBuff.push_back(nibbleBuffer);
+
+    return outBuff;
+}
+static std::vector<uint8_t> EncodeImaAdpcmStereo(const std::vector<uint8_t>& rawData)
+{
+    std::vector<int16_t> pcmSamples;
+    for (size_t i = 0; i + 1 < rawData.size(); i += 2) {
+        pcmSamples.push_back((int16_t)(rawData[i] | (rawData[i + 1] << 8)));
+    }
+
+    // split
+    std::vector<int16_t> left, right;
+    for (size_t i = 0; i < pcmSamples.size(); i += 2) {
+        left.push_back(pcmSamples[i]);
+        if (i + 1 < pcmSamples.size())
+            right.push_back(pcmSamples[i + 1]);
+    }
+
+    ImaAdpcmState stateL = {}, stateR = {};
+    std::vector<uint8_t> outBuff;
+
+    size_t maxSamples = std::max(left.size(), right.size());
+    bool hasHighNibble = false;
+    uint8_t nibbleBuffer = 0;
+
+    for (size_t i = 0; i < maxSamples; ++i) {
+        auto encodeSample = [](int16_t sample, ImaAdpcmState& state) -> uint8_t {
+            short diff = sample - state.valprev;
+            unsigned char sign = (diff < 0) ? 8 : 0;
+            if (sign) diff = -diff;
+
+            short step = stepsizeTable[state.index];
+            short pred_diff = step >> 3;
+
+            unsigned char adjust_idx = 0;
+            for (int i = 4; i; i >>= 1, step >>= 1) {
+                if (diff >= step) {
+                    adjust_idx |= i;
+                    diff -= step;
+                    pred_diff += step;
+                }
+            }
+
+            state.valprev += sign ? -pred_diff : pred_diff;
+            state.valprev = std::clamp(state.valprev, -32768, 32767);
+
+            state.index += indexTable[adjust_idx];
+            state.index = std::clamp(state.index, 0, 88);
+
+            return sign | adjust_idx;
+        };
+
+        if (i < left.size()) {
+            uint8_t nibble = encodeSample(left[i], stateL);
+            if (!hasHighNibble) {
+                nibbleBuffer = (nibble << 4);
+                hasHighNibble = true;
+            }
+            else {
+                nibbleBuffer |= (nibble & 0x0F);
+                outBuff.push_back(nibbleBuffer);
+                hasHighNibble = false;
+            }
+        }
+
+        if (i < right.size()) {
+            uint8_t nibble = encodeSample(right[i], stateR);
+            if (!hasHighNibble) {
+                nibbleBuffer = (nibble << 4);
+                hasHighNibble = true;
+            }
+            else {
+                nibbleBuffer |= (nibble & 0x0F);
+                outBuff.push_back(nibbleBuffer);
+                hasHighNibble = false;
+            }
+        }
+    }
+    
+    if (hasHighNibble)
+        outBuff.push_back(nibbleBuffer);
+
     return outBuff;
 }
 
-std::vector<int16_t> DecodeImaAdpcm(const std::vector<uint8_t>& samples)
-{
-    std::vector<int16_t> outBuff;
-    ImaAdpcmState state;
 
-    for (auto code : samples) {
-        short pred_diff;	/* Predicted difference to next sample */
-        short step;		/* holds previous StepSize value */
-        char sign;
-        /* Separate sign and magnitude */
-        sign = code & 0x8;
-        code &= 0x7;
-        /*
-         * Computes pred_diff = (code + 0.5) * step / 4,
-         * but see comment in adpcm_coder.
-         */
-        step = stepsizeTable[state.index];
-        /* Compute difference and new predicted value */
-        pred_diff = step >> 3;
-        for (int i = 0x4; i; i >>= 1, step >>= 1) {
-            if (code & i) {
-                pred_diff += step;
-            }
+std::vector<int16_t> DecodeImaAdpcm(const std::vector<uint8_t>& samples, int num_channels = 1)
+{    
+    std::vector<ImaAdpcmState> states(num_channels);
+
+    size_t sample_count = (samples.size() * 2);
+    std::vector<int16_t> outBuff;
+    outBuff.resize(sample_count);
+
+    int sample_idx = 0;
+
+    for (uint8_t byte : samples) {
+        for (int shift = 0; shift <= 4; shift += 4) {
+            uint8_t code = (byte >> shift) & 0x0F;
+            int channel = sample_idx % num_channels;
+
+            auto& state = states[channel];
+
+            int step = stepsizeTable[state.index];
+            int diff = step >> 3;
+            if (code & 1) diff += step >> 2;
+            if (code & 2) diff += step >> 1;
+            if (code & 4) diff += step;
+
+            if (code & 8)
+                state.valprev -= diff;
+            else
+                state.valprev += diff;
+
+            state.valprev = std::clamp(state.valprev, -32768, 32767);
+            state.index += indexTable[code];
+            state.index = std::clamp(state.index, 0, 88);
+
+            outBuff[sample_idx++] = static_cast<int16_t>(state.valprev);
         }
-        state.valprev += (sign) ? -pred_diff : pred_diff;
-        /* Clamp output value */
-        if (state.valprev > 32767) {
-            state.valprev = 32767;
-        }
-        else if (state.valprev < -32768) {
-            state.valprev = -32768;
-        }
-        /* Find new StepSize index value */
-        state.index += indexTable[code];
-        if (state.index < 0) {
-            state.index = 0;
-        }
-        else if (state.index > 88) {
-            state.index = 88;
-        }
-        int16_t val = static_cast<int16_t>(state.valprev);
-        outBuff.push_back(val);
     }
+
     return outBuff;
 }
