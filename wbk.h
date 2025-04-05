@@ -78,7 +78,7 @@ public:
     static int GetDuration(const nslWave& wave);
     static double GetDurationMs(const nslWave& wave);
 
-    void read(std::istream& stream); 
+    void parse(std::istream& stream); 
     void read(const std::vector<uint8_t>& data); 
     void read(std::filesystem::path path);
     void write(std::filesystem::path path);
@@ -102,13 +102,13 @@ inline int WBK::GetNumChannels(const nslWave& wave) {
 void WBK::read(const std::vector<uint8_t>& data)
 {
     std::istringstream stream(std::string(reinterpret_cast<const char*>(data.data()), data.size()));
-    read(stream);
+    parse(stream);
 }
 void WBK::read(std::filesystem::path path)
 {
     std::ifstream stream(path, std::ios::binary);
     if (!stream.good()) throw std::runtime_error("Failed to open file");
-    read(stream);
+    parse(stream);
 }
 inline void WBK::SetNumChannels(nslWave& wave, int num_channels) {
     unsigned char channel_mask = 0xFF, new_channel_bits = 0;
@@ -175,7 +175,7 @@ void WBK::SetNumSamples(nslWave& wave, int num_samples)
     }
 }
 
-void WBK::read(std::istream& stream)
+void WBK::parse(std::istream& stream)
 {
     // stay fresh
     entries.clear();
@@ -193,8 +193,12 @@ void WBK::read(std::istream& stream)
         stream.seekg(0, std::ios::beg);
         stream.read(reinterpret_cast<char*>(&header), sizeof header_t);
 
+        const auto numEntries = header.num_entries;
+        tracks.reserve(numEntries);
+        entries.reserve(numEntries);
+
         // read all entries
-        for (int32_t index = 0; index < header.num_entries; ++index) {
+        for (int32_t index = 0; index < numEntries; ++index) {
             nslWave entry;
             stream.seekg(sizeof header_t + (sizeof nslWave * index), std::ios::beg);
             stream.read(reinterpret_cast<char*>(&entry), sizeof nslWave);
@@ -261,6 +265,7 @@ void WBK::read(std::istream& stream)
                 auto samples_size = entry.num_bytes;
                 bdata.resize(samples_size);
                 stream.read((char*)bdata.data(), samples_size);
+                bdata.shrink_to_fit();
 
                 std::vector<int16_t> decoded_samples;                
                 switch (entry.codec) {
@@ -268,6 +273,7 @@ void WBK::read(std::istream& stream)
                         decoded_samples = DecodeImaAdpcm(bdata, GetNumChannels(entry));
                         break;
                 }
+                decoded_samples.shrink_to_fit();
                 tracks.push_back(decoded_samples);
             }
             else
@@ -275,11 +281,12 @@ void WBK::read(std::istream& stream)
 
             entries.push_back(entry);
         }
-        
+
         // read metadata
         if (header.metadata_offs) {
             size_t num_metadata = (header.entry_desc_offs - header.metadata_offs) / sizeof metadata_t;
             if (num_metadata) {
+                metadata.reserve(num_metadata);
                 stream.seekg(header.metadata_offs, std::ios::beg);
                 for (int index = 0; index < num_metadata; ++index) {
                     metadata_t tmp_metadata;
@@ -293,6 +300,9 @@ void WBK::read(std::istream& stream)
                 }
             }
         }
+
+        entries.shrink_to_fit();
+        tracks.shrink_to_fit();
 
         char desc[16] = { '\0' };
         stream.read(reinterpret_cast<char*>(&desc), 16);
@@ -309,31 +319,20 @@ void WBK::write(std::filesystem::path path) {
 
 bool WBK::replace(int replacement_index, const WAV& wav, Codec codec)
 {
-    if (replacement_index < 0 || replacement_index > header.num_entries)
+    if (replacement_index < 0 || replacement_index > header.num_entries-1)
         return false;
-
-    if (replacement_index > 0)
-        replacement_index--;
 
     // copy everything from the original up until the track data we want to replace
     std::vector<uint8_t> new_raw_data(raw_data.begin(), raw_data.begin() + entries[replacement_index].compressed_data_offs);
-    
-    // encode
+    nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof(header_t) + (sizeof(nslWave) * (replacement_index))]);
+
     auto samples = wav.samples;
-    std::vector<uint8_t> encoded_samples;    // @todo: codecs
-    switch (codec) {
-        case IMA_ADPCM:
-            encoded_samples = EncodeImaAdpcm(samples, wav.header.numChannels);
-            break;
-    };
-
-    // calc the next available data offset and adjust the replacement track info
-    int current_data_offset = entries[replacement_index+1].compressed_data_offs;
-    int next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
-    nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof(header_t) + (sizeof(nslWave) * (replacement_index+1))]);
-
+    std::vector<uint8_t> encoded_samples;
     if (codec != Keep && (entry.codec != codec))
         entry.codec = codec;
+
+    if (codec != Keep || entry.codec == IMA_ADPCM)
+        encoded_samples = EncodeImaAdpcm(samples, wav.header.numChannels);
 
     const auto wav_channels = wav.header.numChannels;
     if (GetNumChannels(entry) != wav_channels)
@@ -343,34 +342,34 @@ bool WBK::replace(int replacement_index, const WAV& wav, Codec codec)
     if (entry.samples_per_second != wav_sample_rate)
         entry.samples_per_second = wav_sample_rate;
 
-    entry.compressed_data_offs = current_data_offset;
-
-    // insert the new track samples
+    // insert the new track samples and calc the next available data offset
+    int current_data_offset = entries[replacement_index].compressed_data_offs;
+    int next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
     new_raw_data.insert(new_raw_data.end(),
         reinterpret_cast<const uint8_t*>(encoded_samples.data()),
         reinterpret_cast<const uint8_t*>(encoded_samples.data() + encoded_samples.size()));
     size_t padding = next_data_offset - (current_data_offset + encoded_samples.size());
     new_raw_data.insert(new_raw_data.end(), padding, 0x00);
 
+    current_data_offset = (int)new_raw_data.size();
+
     // for each entry after the replaced one, we insert it at the right location and modify its start offset.
-    current_data_offset = next_data_offset;
-    for (int index = replacement_index + 1; index < header.num_entries; ++index)
+    for (int index = replacement_index + 1; index < header.num_entries - 1; ++index)
     {
         nslWave& new_entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof header_t + (sizeof(nslWave) * index)]);
 
         size_t data_start = entries[index].compressed_data_offs;
-        size_t data_end = (index + 1 < header.num_entries)
+        size_t data_end = (index + 1 != header.num_entries)
                         ? entries[index + 1].compressed_data_offs
                         : raw_data.size();
         size_t data_size = data_end - data_start;
 
-        new_entry.compressed_data_offs = current_data_offset;
-        new_raw_data.insert(new_raw_data.end(), raw_data.begin() + data_start, raw_data.begin() + data_end);
+        new_entry.compressed_data_offs = next_data_offset;
+        next_data_offset = (next_data_offset + data_size + 0x7FFF) & ~0x7FFF;
+        padding = next_data_offset - new_raw_data.size();
 
-        // re-align
-        current_data_offset = (current_data_offset + data_size + 0x7FFF) & ~0x7FFF;
-        padding = current_data_offset - new_raw_data.size();
-        new_raw_data.insert(new_raw_data.end(), padding, 0x00);
+        new_raw_data.insert(new_raw_data.end(), raw_data.begin() + data_start, raw_data.begin() + data_end);
+        new_raw_data.insert(new_raw_data.end(), padding, 0);
     }
 
     // update the total bytes and parse again

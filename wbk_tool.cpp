@@ -60,7 +60,7 @@ int main(int argc, char** argv)
         size_t index = 0;
         for (auto& track : wbk.tracks) {
             WBK::nslWave& entry = wbk.entries[index];
-            fs::path output_path = fs::path(std::string(argv[3])) / std::to_string(index+1).append(".wav");
+            fs::path output_path = fs::path(std::string(argv[3])) / std::to_string(index).append(".wav");
             WAV::writeWAV(output_path.string(), track, entry.samples_per_second, WBK::GetNumChannels(entry));
             ++index;
         }
@@ -75,7 +75,7 @@ int main(int argc, char** argv)
             if (!replace_path.empty()) {
                 auto successes = 0;
                 for (int i = 0; i < wbk.tracks.size(); ++i) {
-                    fs::path wav_file = replace_path / (std::to_string(i+1) + ".wav");
+                    fs::path wav_file = replace_path / (std::to_string(i) + ".wav");
 
                     if (fs::exists(wav_file)) {
                         WAV replacement_wav;
