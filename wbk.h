@@ -78,11 +78,12 @@ public:
     static int GetDuration(const nslWave& wave);
     static double GetDurationMs(const nslWave& wave);
 
+    void read(std::istream& stream); 
+    void read(const std::vector<uint8_t>& data); 
     void read(std::filesystem::path path);
     void write(std::filesystem::path path);
     bool replace(int replacement_index, const WAV& wav, Codec codec = Keep);
 
-private:
     std::vector<uint8_t> raw_data;
 };
 
@@ -98,7 +99,17 @@ inline int WBK::GetNumChannels(const nslWave& wave) {
         num_channels = 1;
     return num_channels;
 }
-
+void WBK::read(const std::vector<uint8_t>& data)
+{
+    std::istringstream stream(std::string(reinterpret_cast<const char*>(data.data()), data.size()));
+    read(stream);
+}
+void WBK::read(std::filesystem::path path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream.good()) throw std::runtime_error("Failed to open file");
+    read(stream);
+}
 inline void WBK::SetNumChannels(nslWave& wave, int num_channels) {
     unsigned char channel_mask = 0xFF, new_channel_bits = 0;
     for (int i = 0; i < num_channels; ++i)
@@ -164,10 +175,15 @@ void WBK::SetNumSamples(nslWave& wave, int num_samples)
     }
 }
 
-void WBK::read(std::filesystem::path path)
+void WBK::read(std::istream& stream)
 {
-    std::ifstream stream(path, std::ios::binary);
-    if (stream.good()) {
+    // stay fresh
+    entries.clear();
+    tracks.clear();
+    metadata.clear();
+
+    if (stream.good()) 
+    {
         stream.seekg(0, std::ios::end);
         size_t actual_file_size = stream.tellg();
         stream.seekg(0, std::ios::beg);
@@ -182,7 +198,6 @@ void WBK::read(std::filesystem::path path)
             nslWave entry;
             stream.seekg(sizeof header_t + (sizeof nslWave * index), std::ios::beg);
             stream.read(reinterpret_cast<char*>(&entry), sizeof nslWave);
-            entries.push_back(entry);
 
             // calc bits per sample & blockAlign
             int bits_per_sample = 0;
@@ -282,7 +297,6 @@ void WBK::read(std::filesystem::path path)
         char desc[16] = { '\0' };
         stream.read(reinterpret_cast<char*>(&desc), 16);
         printf("Bank Type: %s\n", std::string(desc).c_str());
-        stream.close();
     }
 }
 void WBK::write(std::filesystem::path path) {
@@ -314,9 +328,9 @@ bool WBK::replace(int replacement_index, const WAV& wav, Codec codec)
     };
 
     // calc the next available data offset and adjust the replacement track info
-    int current_data_offset = entries[replacement_index].compressed_data_offs;
+    int current_data_offset = entries[replacement_index+1].compressed_data_offs;
     int next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
-    nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof(header_t) + (sizeof(nslWave) * replacement_index)]);
+    nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof(header_t) + (sizeof(nslWave) * (replacement_index+1))]);
 
     if (codec != Keep && (entry.codec != codec))
         entry.codec = codec;
@@ -359,10 +373,13 @@ bool WBK::replace(int replacement_index, const WAV& wav, Codec codec)
         new_raw_data.insert(new_raw_data.end(), padding, 0x00);
     }
 
-    // update the total bytes
+    // update the total bytes and parse again
     header_t& p_header = *reinterpret_cast<header_t*>(&new_raw_data.data()[0]);
     p_header.total_bytes = (int)new_raw_data.size();
+    raw_data.clear();
     raw_data = std::move(new_raw_data);
+
+    read(raw_data);
 
     return true;
 }

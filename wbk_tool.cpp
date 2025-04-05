@@ -74,8 +74,8 @@ int main(int argc, char** argv)
         else {
             if (!replace_path.empty()) {
                 auto successes = 0;
-                for (int i = 0; i < wbk.entries.size(); ++i) {
-                    fs::path wav_file = replace_path / (std::to_string(i) + ".wav");
+                for (int i = 0; i < wbk.tracks.size(); ++i) {
+                    fs::path wav_file = replace_path / (std::to_string(i+1) + ".wav");
 
                     if (fs::exists(wav_file)) {
                         WAV replacement_wav;
@@ -92,7 +92,7 @@ int main(int argc, char** argv)
                     else
                         printf("Replacement track not found for index %d!\n", i);
                 }
-                printf("Replaced %d/%zd entries\n", successes, wbk.entries.size());
+                printf("Replaced %d/%zd entries\n", successes, wbk.tracks.size());
             }
             else {
                 WAV replacement_wav;
