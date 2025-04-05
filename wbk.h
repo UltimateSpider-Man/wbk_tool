@@ -17,8 +17,8 @@ public:
         PCM,
         PCM2,
         Reserved,
-        Reserved1,
-        Reserved2,
+        ADPCM_1,    // @todo: codecs
+        ADPCM_2,
         Reserved3,
         IMA_ADPCM
     };
@@ -177,20 +177,12 @@ void WBK::read(std::filesystem::path path)
         stream.seekg(0, std::ios::beg);
         stream.read(reinterpret_cast<char*>(&header), sizeof header_t);
 
-
         // read all entries
-        int32_t index;
-        for (index = 0; index < header.num_entries; ++index) {
+        for (int32_t index = 0; index < header.num_entries; ++index) {
             nslWave entry;
             stream.seekg(sizeof header_t + (sizeof nslWave * index), std::ios::beg);
             stream.read(reinterpret_cast<char*>(&entry), sizeof nslWave);
             entries.push_back(entry);
-        }
-
-        // decode & process each track
-        index = 0;
-        for (auto& entry : entries) {
-            ++index;
 
             // calc bits per sample & blockAlign
             int bits_per_sample = 0;
@@ -200,11 +192,11 @@ void WBK::read(std::filesystem::path path)
                 bits_per_sample = 8 * (entry.codec != PCM) + 8;
                 blockAlign = (GetNumChannels(entry) * bits_per_sample) / 8;
             }
-            else if (entry.codec == Reserved1) {
+            else if (entry.codec == ADPCM_1) {
                 bits_per_sample = 16;
                 blockAlign = (bits_per_sample * GetNumChannels(entry)) / 8;
             }
-            else if (entry.codec == Reserved2) {
+            else if (entry.codec == ADPCM_2) {
                 bits_per_sample = 4;
                 blockAlign = 36 * GetNumChannels(entry);
             }
@@ -245,6 +237,29 @@ void WBK::read(std::filesystem::path path)
                 }
                 tracks.push_back(tmp);
             }
+            else if (entry.codec == ADPCM_1)
+            {
+                std::vector<uint8_t> bdata;
+                stream.seekg(entry.compressed_data_offs, std::ios::beg);
+                auto samples_size = entry.num_bytes;    // @todo: codecs
+                if (entry.compressed_data_offs + size > actual_file_size)
+                    samples_size = actual_file_size - entry.compressed_data_offs;
+                bdata.resize(samples_size);
+                stream.read((char*)bdata.data(), samples_size);
+                throw new std::runtime_error("TODO");
+            }
+            else if (entry.codec == ADPCM_2)
+            {
+                std::vector<uint8_t> bdata;
+                stream.seekg(entry.compressed_data_offs, std::ios::beg);
+                auto samples_size = entry.num_bytes;    // @todo: codecs
+                if (entry.compressed_data_offs + size > actual_file_size)
+                    samples_size = actual_file_size - entry.compressed_data_offs;
+                bdata.resize(samples_size);
+                stream.read((char*)bdata.data(), samples_size);
+                int num_channels = 1;
+                throw new std::runtime_error("TODO");
+            }
             else if (entry.codec == IMA_ADPCM)
             {
                 std::vector<uint8_t> bdata;
@@ -253,12 +268,13 @@ void WBK::read(std::filesystem::path path)
                 auto samples_size = entry.num_bytes;
                 bdata.resize(samples_size);
                 stream.read((char*)bdata.data(), samples_size);
-                tracks.push_back(DecodeImaAdpcm(bdata, GetNumChannels(entry)));
+
+                auto decoded_samples = DecodeImaAdpcm(bdata, GetNumChannels(entry));
+                tracks.push_back(decoded_samples);
             }
             else
-            {
-                printf("Unsupported codec (%d)!\n", entry.codec);
-            }
+                throw std::runtime_error((std::ostringstream{} << "Unsupported codec (" << entry.codec << ")").str());
+
             entries.push_back(entry);
         }
         
@@ -307,14 +323,20 @@ bool WBK::replace(int replacement_index, const WAV& wav, Codec codec)
     
     // encode
     auto samples = wav.samples;
-    std::vector<uint8_t> encoded_samples;
-    if (codec == Keep)      // @todo - choose new codec
-        encoded_samples = wav.header.numChannels == 1 ? EncodeImaAdpcmMono(samples) : EncodeImaAdpcmStereo(samples);
+    std::vector<uint8_t> encoded_samples;    // @todo: codecs
+    switch (codec) {
+        case IMA_ADPCM:
+            encoded_samples = EncodeImaAdpcm(samples, wav.header.numChannels);
+            break;
+    };
 
     // calc the next available data offset and adjust the replacement track info
     int current_data_offset = entries[replacement_index].compressed_data_offs;
     int next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
     nslWave& entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof(header_t) + (sizeof(nslWave) * replacement_index)]);
+
+    if (codec != Keep && (entry.codec != codec))
+        entry.codec = codec;
 
     const auto wav_channels = wav.header.numChannels;
     if (GetNumChannels(entry) != wav_channels)

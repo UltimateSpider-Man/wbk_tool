@@ -20,94 +20,25 @@ const int indexTable[16] = {
 };
 
 // taken from ALSA
-static std::vector<uint8_t> EncodeImaAdpcmMono(std::vector<uint8_t>& rawData)
+static std::vector<uint8_t> EncodeImaAdpcm(const std::vector<int16_t>& pcmSamples, int numChannels)
 {
-    auto conv = [](const std::vector<uint8_t>& rawBytes) -> std::vector<int16_t> {
-        std::vector<int16_t> pcmSamples;
-        for (size_t i = 0; i + 1 < rawBytes.size(); i += 2) {
-            pcmSamples.push_back((int16_t)(rawBytes[i] | (rawBytes[i + 1] << 8)));
-        }
-        return pcmSamples;
-    };
-
-    std::vector<int16_t> samples = conv(rawData);
     std::vector<uint8_t> outBuff;
 
-    ImaAdpcmState state = { 0, 0 };
-    bool hasHighNibble = false;
-    uint8_t nibbleBuffer = 0;
+    if (numChannels == 1)
+    {
+        ImaAdpcmState state = {};
+        bool hasHighNibble = false;
+        uint8_t nibbleBuffer = 0;
 
-    for (auto sl : samples) {
-        short diff = sl - state.valprev;
-        unsigned char sign = (diff < 0) ? 0x8 : 0x0;
-        if (sign) diff = -diff;
-
-        short step = stepsizeTable[state.index];
-        short pred_diff = step >> 3;
-
-        unsigned char adjust_idx = 0;
-        for (int i = 0x4; i; i >>= 1, step >>= 1) {
-            if (diff >= step) {
-                adjust_idx |= i;
-                diff -= step;
-                pred_diff += step;
-            }
-        }
-
-        state.valprev += sign ? -pred_diff : pred_diff;
-        state.valprev = std::clamp(state.valprev, -32768, 32767);
-
-        state.index += indexTable[adjust_idx];
-        state.index = std::clamp(state.index, 0, 88);
-
-        uint8_t nibble = sign | adjust_idx;
-        if (!hasHighNibble) {
-            nibbleBuffer = nibble & 0x0F;
-            hasHighNibble = true;
-        } else {
-            nibbleBuffer |= (nibble << 4);
-            outBuff.push_back(nibbleBuffer);
-            hasHighNibble = false;
-        }
-    }
-
-    if (hasHighNibble)
-        outBuff.push_back(nibbleBuffer);
-
-    return outBuff;
-}
-static std::vector<uint8_t> EncodeImaAdpcmStereo(const std::vector<uint8_t>& rawData)
-{
-    std::vector<int16_t> pcmSamples;
-    for (size_t i = 0; i + 1 < rawData.size(); i += 2) {
-        pcmSamples.push_back((int16_t)(rawData[i] | (rawData[i + 1] << 8)));
-    }
-
-    // split
-    std::vector<int16_t> left, right;
-    for (size_t i = 0; i < pcmSamples.size(); i += 2) {
-        left.push_back(pcmSamples[i]);
-        if (i + 1 < pcmSamples.size())
-            right.push_back(pcmSamples[i + 1]);
-    }
-
-    ImaAdpcmState stateL = {}, stateR = {};
-    std::vector<uint8_t> outBuff;
-
-    size_t maxSamples = std::max(left.size(), right.size());
-    bool hasHighNibble = false;
-    uint8_t nibbleBuffer = 0;
-
-    for (size_t i = 0; i < maxSamples; ++i) {
-        auto encodeSample = [](int16_t sample, ImaAdpcmState& state) -> uint8_t {
+        for (auto sample : pcmSamples) {
             short diff = sample - state.valprev;
-            unsigned char sign = (diff < 0) ? 8 : 0;
+            uint8_t sign = (diff < 0) ? 0x8 : 0x0;
             if (sign) diff = -diff;
 
             short step = stepsizeTable[state.index];
             short pred_diff = step >> 3;
 
-            unsigned char adjust_idx = 0;
+            uint8_t adjust_idx = 0;
             for (int i = 4; i; i >>= 1, step >>= 1) {
                 if (diff >= step) {
                     adjust_idx |= i;
@@ -118,46 +49,75 @@ static std::vector<uint8_t> EncodeImaAdpcmStereo(const std::vector<uint8_t>& raw
 
             state.valprev += sign ? -pred_diff : pred_diff;
             state.valprev = std::clamp(state.valprev, -32768, 32767);
-
             state.index += indexTable[adjust_idx];
             state.index = std::clamp(state.index, 0, 88);
 
-            return sign | adjust_idx;
-        };
-
-        if (i < left.size()) {
-            uint8_t nibble = encodeSample(left[i], stateL);
             if (!hasHighNibble) {
-                nibbleBuffer = (nibble << 4);
+                nibbleBuffer = ((sign | adjust_idx) & 0x0F);
                 hasHighNibble = true;
             }
             else {
-                nibbleBuffer |= (nibble & 0x0F);
+                nibbleBuffer |= ((sign | adjust_idx) << 4);
                 outBuff.push_back(nibbleBuffer);
                 hasHighNibble = false;
             }
         }
 
-        if (i < right.size()) {
-            uint8_t nibble = encodeSample(right[i], stateR);
-            if (!hasHighNibble) {
-                nibbleBuffer = (nibble << 4);
-                hasHighNibble = true;
-            }
-            else {
-                nibbleBuffer |= (nibble & 0x0F);
-                outBuff.push_back(nibbleBuffer);
-                hasHighNibble = false;
-            }
+        if (hasHighNibble)
+            outBuff.push_back(nibbleBuffer);
+    }
+    else if (numChannels == 2)
+    {
+        ImaAdpcmState stateL = {}, stateR = {};
+        for (size_t i = 0; i + 1 < pcmSamples.size(); i += 2) {
+            auto encodeSample = [](int16_t sample, ImaAdpcmState& state) -> uint8_t {
+                short diff = sample - state.valprev;
+                uint8_t sign = (diff < 0) ? 0x8 : 0x0;
+                if (sign) diff = -diff;
+
+                short step = stepsizeTable[state.index];
+                short pred_diff = step >> 3;
+
+                uint8_t adjust_idx = 0;
+                for (int i = 4; i; i >>= 1, step >>= 1) {
+                    if (diff >= step) {
+                        adjust_idx |= i;
+                        diff -= step;
+                        pred_diff += step;
+                    }
+                }
+
+                state.valprev += sign ? -pred_diff : pred_diff;
+                state.valprev = std::clamp(state.valprev, -32768, 32767);
+                state.index += indexTable[adjust_idx];
+                state.index = std::clamp(state.index, 0, 88);
+                return sign | adjust_idx;
+            };
+
+            int16_t left = pcmSamples[i];
+            int16_t right = pcmSamples[i + 1];
+
+            uint8_t leftNib = encodeSample(left, stateL);
+            uint8_t rightNib = encodeSample(right, stateR);
+
+            outBuff.push_back((rightNib << 4) | (leftNib & 0x0F));
         }
     }
-    
-    if (hasHighNibble)
-        outBuff.push_back(nibbleBuffer);
+    else {
+        printf("Unsupported number of channels\n");
+    }
 
     return outBuff;
 }
 
+static std::vector<uint8_t> EncodeImaAdpcm(const std::vector<uint8_t>& wavBytes, int numChannels)
+{
+    std::vector<int16_t> pcmSamples;
+    for (size_t i = 0; i + 1 < wavBytes.size(); i += 2) {
+        pcmSamples.push_back((int16_t)(wavBytes[i] | (wavBytes[i + 1] << 8)));
+    }
+    return EncodeImaAdpcm(pcmSamples, numChannels);
+}
 
 std::vector<int16_t> DecodeImaAdpcm(const std::vector<uint8_t>& samples, int num_channels = 1)
 {    
