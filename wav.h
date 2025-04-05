@@ -10,6 +10,7 @@
 #include "ima_adpcm.h"
 
 struct WAV {
+    #pragma pack(push, 1)
     struct WAVHeader {
         char riff[4] = { 'R', 'I', 'F', 'F' };
         uint32_t chunkSize;
@@ -25,7 +26,7 @@ struct WAV {
         char data[4] = { 'd', 'a', 't', 'a' };
         uint32_t subchunk2Size;
     } header;
-
+    #pragma pack(pop)
     std::vector<uint8_t> samples;
 
     bool readWAV(const std::filesystem::path& filename) {
