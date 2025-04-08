@@ -24,20 +24,22 @@ int main(int argc, char** argv)
 {
     test_run();
 
-    if (argc < 4 || argc > 6) {
-        printf("Usage: %s -e|-r <.wbk> <.wav>\n", argv[0]);
-        printf("\tOptional:\n");
-        printf("\t\t-c\t:Codec type\n");
-        printf("\t\t\t\t1: PCM\n");
-        printf("\t\t\t\t2: PCM2\n");
-        printf("\t\t\t\t3: Reserved\n");
-        printf("\t\t\t\t4: ADPCM_1\n");
-        printf("\t\t\t\t5: ADPCM_2\n");
-        printf("\t\t\t\t6: Reserved3\n");
-        printf("\t\t\t\t7: IMA_ADPCM\n");
+    if (argc < 3 || argc > 6) {
+        printf("Usage:\n");
+        printf("  %s -e <.wbk> <output_folder>\n", argv[0]);
+        printf("  %s -r <.wbk> <index|folder> <replacement.wav (if index)>\n", argv[0]);
+        printf("\nOptions:\n");
+        printf("  -c <codec>   Set codec when replacing:\n");
+        printf("               1: PCM\n");
+        printf("               2: PCM2\n");
+        printf("               3: Reserved\n");
+        printf("               4: ADPCM_1\n");
+        printf("               5: ADPCM_2\n");
+        printf("               6: Reserved3\n");
+        printf("               7: IMA_ADPCM\n");
         return -1;
     }
-    
+
     bool extract = false;
     int replace_idx = 0;
     std::filesystem::path replace_path;
