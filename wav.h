@@ -53,7 +53,7 @@ struct WAV {
         }
         return true;
     }
-    static void writeWAV(const std::string& filename, std::vector<int16_t>& samples, uint32_t sampleRate, int nchannels = 1) {
+    static bool writeWAV(const std::string& filename, std::vector<int16_t>& samples, uint32_t sampleRate, int nchannels = 1) {
         WAVHeader header;
         header.sampleRate = sampleRate;
         header.numChannels = nchannels;
@@ -65,12 +65,12 @@ struct WAV {
 
         std::ofstream outFile(filename, std::ios::binary);
         if (!outFile)
-            printf("Failed to write to WAV file.\n");
+            return false;
         else {
             outFile.write(reinterpret_cast<const char*>(&header), sizeof(WAVHeader));
             outFile.write(reinterpret_cast<const char*>(samples.data()), samples.size() * sizeof(int16_t));
             outFile.close();
-            printf("Written to %s\n", filename.c_str());
+            return true;
         }
     }
 };

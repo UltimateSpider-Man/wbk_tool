@@ -26,6 +26,15 @@ int main(int argc, char** argv)
 
     if (argc < 4 || argc > 6) {
         printf("Usage: %s -e|-r <.wbk> <.wav>\n", argv[0]);
+        printf("\tOptional:\n");
+        printf("\t\t-c\t:Codec type\n");
+        printf("\t\t\t\t1: PCM\n");
+        printf("\t\t\t\t2: PCM2\n");
+        printf("\t\t\t\t3: Reserved\n");
+        printf("\t\t\t\t4: ADPCM_1\n");
+        printf("\t\t\t\t5: ADPCM_2\n");
+        printf("\t\t\t\t6: Reserved3\n");
+        printf("\t\t\t\t7: IMA_ADPCM\n");
         return -1;
     }
     
@@ -52,11 +61,28 @@ int main(int argc, char** argv)
         return -1;
     }
 
+    WBK::Codec codec = WBK::Codec::Keep;
+    for (int i = 1; i < argc; ++i)
+    {
+        int nextIdx = i + 1;
+        if (strstr(argv[i], "-c") && nextIdx <= argc) 
+        {
+            auto codecType = atoi(argv[nextIdx]);
+            if (codecType >= WBK::Codec::PCM && codecType <= WBK::Codec::IMA_ADPCM)
+                codec = (WBK::Codec)codecType;
+            else {
+                printf("Invalid codec type specified!");
+                return -1;
+            }
+        }
+    }
+
+
     WBK wbk;
-    wbk.read(argv[2]);
 
     if (extract)
     {
+        wbk.read(argv[2]);
         size_t index = 0;
         for (auto& track : wbk.tracks) {
             WBK::nslWave& entry = wbk.entries[index];
@@ -72,6 +98,8 @@ int main(int argc, char** argv)
             printf("Invalid replacement index specified!\n");
         }
         else {
+            wbk.read(argv[2], false);
+
             if (!replace_path.empty()) {
                 auto successes = 0;
                 for (int i = 0; i < wbk.tracks.size(); ++i) {
@@ -80,7 +108,7 @@ int main(int argc, char** argv)
                     if (fs::exists(wav_file)) {
                         WAV replacement_wav;
                         if (replacement_wav.readWAV(wav_file.string())) {
-                            if (wbk.replace(i, replacement_wav)) {
+                            if (wbk.replace(i, replacement_wav, codec)) {
                                 printf("Replaced index %d\n", i);
                                 modified = true;
                                 successes++;
@@ -109,8 +137,8 @@ int main(int argc, char** argv)
             fs::path path = fs::path(std::string(argv[2])).replace_extension(".new.wbk").string();
             wbk.write(path);
             printf("Written to %s\n", path.string().c_str());
+            return 1;
         }
     }
-
-    return 1;
+    return 0;
 }

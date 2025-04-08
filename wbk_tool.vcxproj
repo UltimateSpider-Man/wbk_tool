@@ -133,7 +133,9 @@
     <ClCompile Include="wbk_tool.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="adpcm1.h" />
     <ClInclude Include="ima_adpcm.h" />
+    <ClInclude Include="adpcm2.h" />
     <ClInclude Include="wav.h" />
     <ClInclude Include="wbk.h" />
   </ItemGroup>
