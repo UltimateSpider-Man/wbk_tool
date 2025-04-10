@@ -415,7 +415,7 @@ bool WBK::replace(int replacement_index, const WAV& wav, Codec codec)
     current_data_offset = (int)new_raw_data.size();
 
     // for each entry after the replaced one, we insert it at the right location and modify its start offset.
-    for (int index = replacement_index + 1; index < header.num_entries - 1; ++index)
+    for (int index = replacement_index + 1; index < header.num_entries; ++index)
     {
         nslWave& new_entry = *reinterpret_cast<nslWave*>(&new_raw_data.data()[sizeof header_t + (sizeof(nslWave) * index)]);
 
