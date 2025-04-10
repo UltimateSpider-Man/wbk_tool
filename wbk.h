@@ -405,7 +405,7 @@ bool WBK::replace(int replacement_index, const WAV& wav, Codec codec)
 
     // insert the new track samples and calc the next available data offset
     int current_data_offset = entries[replacement_index].compressed_data_offs;
-    int next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
+    size_t next_data_offset = (current_data_offset + encoded_samples.size() + 0x7FFF) & ~0x7FFF;
     new_raw_data.insert(new_raw_data.end(),
         reinterpret_cast<const uint8_t*>(encoded_samples.data()),
         reinterpret_cast<const uint8_t*>(encoded_samples.data() + encoded_samples.size()));
