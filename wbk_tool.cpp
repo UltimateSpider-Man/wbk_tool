@@ -24,7 +24,7 @@ int main(int argc, char** argv)
 {
     test_run();
 
-    if (argc < 3 || argc > 6) {
+    if (argc < 3 || argc > 7) {
         printf("Usage:\n");
         printf("  %s -e <.wbk> <output_folder>\n", argv[0]);
         printf("  %s -r <.wbk> <index|folder> <replacement.wav (if index)>\n", argv[0]);
@@ -41,7 +41,7 @@ int main(int argc, char** argv)
     }
 
     bool extract = false;
-    int replace_idx = 0;
+    int replace_idx = -1;
     std::filesystem::path replace_path;
 
     if (strstr(argv[1], "-e")) {
@@ -66,7 +66,7 @@ int main(int argc, char** argv)
     WBK::Codec codec = WBK::Codec::Keep;
     for (int i = 1; i < argc; ++i)
     {
-        int nextIdx = i + 1;
+        int nextIdx = (i + 1 < argc) ? i + 1 : argc;
         if (strstr(argv[i], "-c") && nextIdx <= argc) 
         {
             auto codecType = atoi(argv[nextIdx]);
@@ -95,16 +95,17 @@ int main(int argc, char** argv)
         return 1;
     }
     else {
+        wbk.read(argv[2], false);
+
         bool modified = false;
-        if (replace_path.empty() && replace_idx > wbk.header.num_entries) {
+        if (replace_path.empty() && replace_idx != -1 && replace_idx > wbk.header.num_entries) {
             printf("Invalid replacement index specified!\n");
         }
-        else {
-            wbk.read(argv[2], false);
+        else if (replace_idx != -1 || !replace_path.empty()) {
 
             if (!replace_path.empty()) {
                 auto successes = 0;
-                for (int i = 0; i < wbk.tracks.size(); ++i) {
+                for (int i = 0; i < wbk.entries.size(); ++i) {
                     fs::path wav_file = replace_path / (std::to_string(i) + ".wav");
 
                     if (fs::exists(wav_file)) {
@@ -122,7 +123,7 @@ int main(int argc, char** argv)
                     else
                         printf("Replacement track not found for index %d!\n", i);
                 }
-                printf("Replaced %d/%zd entries\n", successes, wbk.tracks.size());
+                printf("Replaced %d/%zd entries\n", successes, wbk.entries.size());
             }
             else {
                 WAV replacement_wav;
