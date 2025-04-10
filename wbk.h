@@ -436,10 +436,8 @@ bool WBK::replace(int replacement_index, const WAV& wav, Codec codec)
     // update the total bytes and parse again
     header_t& p_header = *reinterpret_cast<header_t*>(&new_raw_data.data()[0]);
     p_header.total_bytes = (int)new_raw_data.size();
-    raw_data.clear();
-    raw_data = std::move(new_raw_data);
 
-    read(raw_data);
-
+    raw_data.swap(new_raw_data);
+    read(raw_data, false);
     return true;
 }
