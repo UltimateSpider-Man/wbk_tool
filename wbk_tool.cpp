@@ -2,86 +2,8 @@
 
 namespace fs = std::filesystem;
 
-//#define _CODEC_TEST
-
-void test_run()
-{
-#ifdef _CODEC_TEST
-    WBK wbk2;
-    wbk2.read(R"(samples\STREAMS_VOICE_IT_PS2.WBK)");
-    WAV::writeWAV(R"(samples\STREAMS_VOICE_IT_PS2.WBK.wav)", wbk2.tracks[0], wbk2.entries[0].samples_per_second, WBK::GetNumChannels(wbk2.entries[0]));
-
-    WAV wav;
-    wav.readWAV(R"(samples\STREAMS_VOICE_IT_PS2.WBK.wav)");
-    wbk2.replace(0, wav);
-    wbk2.write("test.wbk");
-
-
-    WBK wbkReEncoded;
-    wbkReEncoded.read("test.wbk");
-    WAV::writeWAV(R"(samples\STREAMS_VOICE_IT_PS2_re_encoded_decoded.wav)", wbkReEncoded.tracks[0], wbkReEncoded.entries[0].samples_per_second, WBK::GetNumChannels(wbkReEncoded.entries[0]));
-
-#endif
-#ifdef _REPLACE_TEST
- //   WBK wbk2;
-    //wbk2.parse(R"(TREYARCH_LOGO_EN.WBK)");
-//    WAV::writeWAV(R"(TREYARCH_LOGO_EN.WBK.wav)", wbk2.tracks[0], wbk2.entries[0].samples_per_second / WBK::GetNumChannels(wbk2.entries[0]), WBK::GetNumChannels(wbk2.entries[0]));
-
-  //  WAV replacement_wav;
-  //  replacement_wav.readWAV(R"(TREYARCH_LOGO_EN.WBK.wav)");
-  //  wbk2.replace(0, replacement_wav);
-  //  wbk2.write(R"(TREYARCH_LOGO_EN.WBK_test.WBK)");
-
-  //  WBK wbk3;
-    //wbk3.parse(R"(TREYARCH_LOGO_EN.WBK_test.WBK)");
-  //  WAV::writeWAV(R"(TREYARCH_LOGO_EN.WBK_test.wav)", wbk3.tracks[0], wbk3.entries[0].samples_per_second, WBK::GetNumChannels(wbk3.entries[0]));
-#endif
-
-
-#ifdef _BATCH_REPLACE_TEST
-    WBK wbk;
-    wbk.read(R"(STREAMS_MUSIC.WBK)");
-
-    size_t index = 0;
-    for (int i = 0; i < wbk.entries.size(); ++i) 
-    {
-        fs::path wav_file = fs::path("test_output") / (std::to_string(i) + ".wav");
-
-        if (fs::exists(wav_file)) {
-            WAV replacement_wav;
-            if (replacement_wav.readWAV(wav_file.string())) {
-                if (wbk.replace(i, replacement_wav) == WBK_OK) {
-                    printf("Replaced index %d\n", i);
-                }
-                else
-                    printf("Failed to replace index %d!\n", i);
-            }
-        }
-        else
-            printf("Replacement track not found for index %d!\n", i);
-    }    
-
-    fs::path path = fs::path(std::string(R"(STREAMS_MUSIC.WBK)")).replace_extension(".new.wbk").string();
-    wbk.write(path);
-    printf("Written to %s\n", path.string().c_str());
-
-    // extract
-    index = 0;
-    for (auto& track : wbk.tracks) {
-        WBK::nslWave& entry = wbk.entries[index];
-        fs::path output_path = fs::path(std::string(R"(output2)")) / std::to_string(index).append(".wav");
-        WAV::writeWAV(output_path.string(), track, entry.samples_per_second, WBK::GetNumChannels(entry));
-        ++index;
-    }
-#endif
-    return;
-}
-
 int main(int argc, char** argv)
 {
-    //test_run();
-    //return -1;
-
     if (argc < 3 || argc > 7) {
         printf("Usage:\n");
         printf("  %s -e <.wbk> <output_folder>\n", argv[0]);
