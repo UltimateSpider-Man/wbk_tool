@@ -2,27 +2,85 @@
 
 namespace fs = std::filesystem;
 
+//#define _CODEC_TEST
+
 void test_run()
 {
-#if _DEBUG
+#ifdef _CODEC_TEST
     WBK wbk2;
-    wbk2.read(R"(TREYARCH_LOGO_EN.WBK)");
-    WAV::writeWAV(R"(TREYARCH_LOGO_EN.WBK.wav)", wbk2.tracks[0], wbk2.entries[0].samples_per_second / WBK::GetNumChannels(wbk2.entries[0]), WBK::GetNumChannels(wbk2.entries[0]));
+    wbk2.read(R"(samples\STREAMS_VOICE_IT_PS2.WBK)");
+    WAV::writeWAV(R"(samples\STREAMS_VOICE_IT_PS2.WBK.wav)", wbk2.tracks[0], wbk2.entries[0].samples_per_second, WBK::GetNumChannels(wbk2.entries[0]));
 
-    WAV replacement_wav;
-    replacement_wav.readWAV(R"(TREYARCH_LOGO_EN.WBK.wav)");
-    wbk2.replace(0, replacement_wav);
-    wbk2.write(R"(TREYARCH_LOGO_EN.WBK_test.WBK)");
+    WAV wav;
+    wav.readWAV(R"(samples\STREAMS_VOICE_IT_PS2.WBK.wav)");
+    wbk2.replace(0, wav);
+    wbk2.write("test.wbk");
 
-    WBK wbk3;
-    wbk3.read(R"(TREYARCH_LOGO_EN.WBK_test.WBK)");
-    WAV::writeWAV(R"(TREYARCH_LOGO_EN.WBK_test.wav)", wbk3.tracks[0], wbk3.entries[0].samples_per_second, WBK::GetNumChannels(wbk3.entries[0]));
+
+    WBK wbkReEncoded;
+    wbkReEncoded.read("test.wbk");
+    WAV::writeWAV(R"(samples\STREAMS_VOICE_IT_PS2_re_encoded_decoded.wav)", wbkReEncoded.tracks[0], wbkReEncoded.entries[0].samples_per_second, WBK::GetNumChannels(wbkReEncoded.entries[0]));
+
 #endif
+#ifdef _REPLACE_TEST
+ //   WBK wbk2;
+    //wbk2.parse(R"(TREYARCH_LOGO_EN.WBK)");
+//    WAV::writeWAV(R"(TREYARCH_LOGO_EN.WBK.wav)", wbk2.tracks[0], wbk2.entries[0].samples_per_second / WBK::GetNumChannels(wbk2.entries[0]), WBK::GetNumChannels(wbk2.entries[0]));
+
+  //  WAV replacement_wav;
+  //  replacement_wav.readWAV(R"(TREYARCH_LOGO_EN.WBK.wav)");
+  //  wbk2.replace(0, replacement_wav);
+  //  wbk2.write(R"(TREYARCH_LOGO_EN.WBK_test.WBK)");
+
+  //  WBK wbk3;
+    //wbk3.parse(R"(TREYARCH_LOGO_EN.WBK_test.WBK)");
+  //  WAV::writeWAV(R"(TREYARCH_LOGO_EN.WBK_test.wav)", wbk3.tracks[0], wbk3.entries[0].samples_per_second, WBK::GetNumChannels(wbk3.entries[0]));
+#endif
+
+
+#ifdef _BATCH_REPLACE_TEST
+    WBK wbk;
+    wbk.read(R"(STREAMS_MUSIC.WBK)");
+
+    size_t index = 0;
+    for (int i = 0; i < wbk.entries.size(); ++i) 
+    {
+        fs::path wav_file = fs::path("test_output") / (std::to_string(i) + ".wav");
+
+        if (fs::exists(wav_file)) {
+            WAV replacement_wav;
+            if (replacement_wav.readWAV(wav_file.string())) {
+                if (wbk.replace(i, replacement_wav) == WBK_OK) {
+                    printf("Replaced index %d\n", i);
+                }
+                else
+                    printf("Failed to replace index %d!\n", i);
+            }
+        }
+        else
+            printf("Replacement track not found for index %d!\n", i);
+    }    
+
+    fs::path path = fs::path(std::string(R"(STREAMS_MUSIC.WBK)")).replace_extension(".new.wbk").string();
+    wbk.write(path);
+    printf("Written to %s\n", path.string().c_str());
+
+    // extract
+    index = 0;
+    for (auto& track : wbk.tracks) {
+        WBK::nslWave& entry = wbk.entries[index];
+        fs::path output_path = fs::path(std::string(R"(output2)")) / std::to_string(index).append(".wav");
+        WAV::writeWAV(output_path.string(), track, entry.samples_per_second, WBK::GetNumChannels(entry));
+        ++index;
+    }
+#endif
+    return;
 }
 
 int main(int argc, char** argv)
 {
-    test_run();
+    //test_run();
+    //return -1;
 
     if (argc < 3 || argc > 7) {
         printf("Usage:\n");
@@ -52,6 +110,7 @@ int main(int argc, char** argv)
         }
         else {
             auto idx = atoi(argv[3]);
+            
             if (idx > INT_MIN && idx < INT_MAX)
                 replace_idx = idx;
             else
@@ -63,14 +122,14 @@ int main(int argc, char** argv)
         return -1;
     }
 
-    WBK::Codec codec = WBK::Codec::Keep;
+    WBK::Codec codec = WBK::Keep;
     for (int i = 1; i < argc; ++i)
     {
         int nextIdx = (i + 1 < argc) ? i + 1 : argc;
         if (strstr(argv[i], "-c") && nextIdx <= argc) 
         {
             auto codecType = atoi(argv[nextIdx]);
-            if (codecType >= WBK::Codec::PCM && codecType <= WBK::Codec::IMA_ADPCM)
+            if (codecType >= WBK::PCM && codecType <= WBK::IMA_ADPCM)
                 codec = (WBK::Codec)codecType;
             else {
                 printf("Invalid codec type specified!");
@@ -78,10 +137,8 @@ int main(int argc, char** argv)
             }
         }
     }
-
-
+    
     WBK wbk;
-
     if (extract)
     {
         wbk.read(argv[2]);
@@ -98,7 +155,7 @@ int main(int argc, char** argv)
         wbk.read(argv[2], false);
 
         bool modified = false;
-        if (replace_path.empty() && replace_idx != -1 && replace_idx > wbk.header.num_entries) {
+        if (replace_path.empty() && replace_idx != -1 && replace_idx >= wbk.header.num_entries) {
             printf("Invalid replacement index specified!\n");
         }
         else if (replace_idx != -1 || !replace_path.empty()) {
@@ -111,7 +168,7 @@ int main(int argc, char** argv)
                     if (fs::exists(wav_file)) {
                         WAV replacement_wav;
                         if (replacement_wav.readWAV(wav_file.string())) {
-                            if (wbk.replace(i, replacement_wav, codec)) {
+                            if (wbk.replace(i, replacement_wav, codec) == WBK_OK) {
                                 printf("Replaced index %d\n", i);
                                 modified = true;
                                 successes++;
@@ -119,7 +176,10 @@ int main(int argc, char** argv)
                             else
                                 printf("Failed to replace index %d!\n", i);
                         }
-                    } 
+                        else {
+                            printf("This WAV failed to parse\n");
+                        }
+                    }
                     else
                         printf("Replacement track not found for index %d!\n", i);
                 }
@@ -128,10 +188,13 @@ int main(int argc, char** argv)
             else {
                 WAV replacement_wav;
                 if (replacement_wav.readWAV(argv[4])) {
-                    if (wbk.replace(replace_idx, replacement_wav)) {
+                    if (wbk.replace(replace_idx, replacement_wav) == WBK_OK) {
                         modified = true;
                         printf("Replaced index %d\n", replace_idx);
                     }
+                }
+                else {
+                    printf("This WAV failed to parse\n");
                 }
             }
         }

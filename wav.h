@@ -29,28 +29,54 @@ struct WAV {
     #pragma pack(pop)
     std::vector<uint8_t> samples;
 
+
     bool readWAV(const std::filesystem::path& filename) {
-        std::ifstream inputFile(filename, std::ios::binary);
-        if (!inputFile.good()) {
-            return false;
-        }
+        std::ifstream f(filename, std::ios::binary);
+        if (!f.good()) return false;
 
         samples.clear();
-        inputFile.read(reinterpret_cast<char*>(&header), sizeof(WAVHeader));
-        if (inputFile.gcount() != sizeof(WAVHeader)) {
-            printf("Failed to read WAV header.\n");
+
+        char riff[4], wave[4];
+        uint32_t riffSize = 0;
+        if (!f.read(riff, 4) || !f.read(reinterpret_cast<char*>(&riffSize), 4) || !f.read(wave, 4))
             return false;
-        }
-        if (std::string(header.riff, 4) != "RIFF" || std::string(header.wave, 4) != "WAVE") {
-            printf("Invalid WAV file format.\n");
+        if (std::string(riff, 4) != "RIFF" || std::string(wave, 4) != "WAVE")
             return false;
+
+        bool gotFmt = false, gotData = false;
+        while (f && !(gotFmt && gotData)) {
+            char id[4];
+            uint32_t sz = 0;
+            if (!f.read(id, 4) || !f.read(reinterpret_cast<char*>(&sz), 4)) break;
+
+            if (std::string(id, 4) == "fmt ") {
+                if (sz < 16) return false;
+                f.read(reinterpret_cast<char*>(&header.audioFormat), 2);
+                f.read(reinterpret_cast<char*>(&header.numChannels), 2);
+                f.read(reinterpret_cast<char*>(&header.sampleRate), 4);
+                f.read(reinterpret_cast<char*>(&header.byteRate), 4);
+                f.read(reinterpret_cast<char*>(&header.blockAlign), 2);
+                f.read(reinterpret_cast<char*>(&header.bitsPerSample), 2);
+                if (sz > 16) f.seekg(sz - 16, std::ios::cur); // skip extras
+                header.subchunk1Size = sz;
+                if (header.audioFormat != 1) return false;
+                gotFmt = true;
+            }
+            else if (std::string(id, 4) == "data") {
+                header.subchunk2Size = sz;
+                samples.resize(sz);
+                if (!f.read(reinterpret_cast<char*>(samples.data()), sz)) return false;
+                gotData = true;
+            }
+            else
+                f.seekg(sz + (sz & 1u), std::ios::cur);
         }
-        samples.resize(header.subchunk2Size);
-        inputFile.read(reinterpret_cast<char*>(samples.data()), header.subchunk2Size);
-        if (inputFile.gcount() != static_cast<std::streamsize>(header.subchunk2Size)) {
-            printf("Failed to read WAV sample data.\n");
-            return false;
-        }
+
+        if ((!gotFmt || !gotData)  || samples.size() % 2) return false;
+
+        header.blockAlign = static_cast<uint16_t>((header.bitsPerSample / 8) * header.numChannels);
+        header.byteRate = header.sampleRate * header.blockAlign;
+
         return true;
     }
     static bool writeWAV(const std::string& filename, std::vector<int16_t>& samples, uint32_t sampleRate, int nchannels = 1) {
