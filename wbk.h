@@ -14,6 +14,14 @@
 #include "adpcm1.h"
 #include "adpcm2.h"
 
+
+// ------
+struct string_hash {
+    int hash;
+    string_hash(int h) : hash(h) {}
+};
+// ------
+
 class WBK {
 public:
     enum Codec : uint8_t {
@@ -97,6 +105,7 @@ public:
     int read(std::filesystem::path path, const bool DecodeTracks = true);
     int write(std::filesystem::path path);
     int replace(int replacement_index, const WAV& wav, Codec codec = Keep);
+    int replace(string_hash hash, const WAV& wav, Codec codec = Keep);
 
 private:
     std::vector<uint8_t> raw_data;
@@ -109,6 +118,7 @@ enum {
     WBK_FILE_TOO_LARGE,
     WBK_WRITE_ERROR,
     WBK_INVALID_REPLACE_INDEX,
+    WBK_HASH_NOT_FOUND
 };
 
 
@@ -403,9 +413,8 @@ int WBK::parse(std::istream& stream, const bool DecodeTracks)
         entries.shrink_to_fit();
         tracks.shrink_to_fit();
 
-        char desc[16] = { '\0' };
         stream.read(reinterpret_cast<char*>(&bank_group), 16);
-        if (desc[0] != 0)
+        if (bank_group[0] != 0)
             printf("Bank Type: %s\n", std::string(bank_group).c_str());
         return WBK_OK;
     }
@@ -466,6 +475,16 @@ std::vector<int16_t> WBK::decode(std::vector<uint8_t> samples, const nslWave& en
         }
     }
     return decoded_samples;
+}
+
+
+
+int WBK::replace(string_hash hash, const WAV& wav, Codec codec)
+{
+    auto it = std::find_if(entries.begin(), entries.end(), [hash](const nslWave& p) { return p.hash == hash.hash; });
+    if (it != entries.end())
+        return replace(int(std::distance(entries.begin(), it)), wav, codec);
+    return WBK_HASH_NOT_FOUND;
 }
 
 int WBK::replace(int replacement_index, const WAV& wav, Codec codec)

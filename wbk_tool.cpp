@@ -9,6 +9,7 @@ int main(int argc, char** argv)
         printf("  %s -e <.wbk> <output_folder>\n", argv[0]);
         printf("  %s -r <.wbk> <index|folder> <replacement.wav (if index)>\n", argv[0]);
         printf("\nOptions:\n");
+        printf("  -h           Treat indices as hashes\n");
         printf("  -c <codec>   Set codec when replacing:\n");
         printf("               1: PCM\n");
         printf("               2: PCM2\n");
@@ -21,6 +22,7 @@ int main(int argc, char** argv)
     }
 
     bool extract = false;
+    bool hashSearch = false;
     int replace_idx = -1;
     std::filesystem::path replace_path;
 
@@ -58,12 +60,16 @@ int main(int argc, char** argv)
                 return -1;
             }
         }
+        if (strstr(argv[i], "-h") && nextIdx <= argc)
+            hashSearch = true;
     }
     
     WBK wbk;
     if (extract)
     {
-        wbk.read(argv[2]);
+        if (wbk.read(argv[2]) != WBK_OK)
+            return WBK_PARSE_FAILED;
+
         size_t index = 0;
         for (auto& track : wbk.tracks) {
             WBK::nslWave& entry = wbk.entries[index];
@@ -77,15 +83,19 @@ int main(int argc, char** argv)
         wbk.read(argv[2], false);
 
         bool modified = false;
-        if (replace_path.empty() && replace_idx != -1 && replace_idx >= wbk.header.num_entries) {
+        if (replace_path.empty() && replace_idx != -1 && (!hashSearch && (replace_idx >= wbk.header.num_entries))) {
             printf("Invalid replacement index specified!\n");
         }
-        else if (replace_idx != -1 || !replace_path.empty()) {
 
+        else if (replace_idx != -1 || !replace_path.empty()) {
             if (!replace_path.empty()) {
                 auto successes = 0;
                 for (int i = 0; i < wbk.entries.size(); ++i) {
-                    fs::path wav_file = replace_path / (std::to_string(i) + ".wav");
+                    std::string name = hashSearch
+                        ? std::format("0x{:08x}.wav", wbk.entries[i].hash)
+                        : std::format("{}.wav", i);
+
+                    const fs::path wav_file = replace_path / name;
 
                     if (fs::exists(wav_file)) {
                         WAV replacement_wav;
@@ -110,6 +120,14 @@ int main(int argc, char** argv)
             else {
                 WAV replacement_wav;
                 if (replacement_wav.readWAV(argv[4])) {
+                    if (hashSearch) {
+                        auto it = std::find_if(wbk.entries.begin(), wbk.entries.end(), [replace_idx](const WBK::nslWave& p) { return p.hash == replace_idx; });
+                        if ((it == wbk.entries.end())) 
+                            return WBK_HASH_NOT_FOUND;
+
+                        replace_idx = int(std::distance(wbk.entries.begin(), it));
+                    }
+
                     if (wbk.replace(replace_idx, replacement_wav) == WBK_OK) {
                         modified = true;
                         printf("Replaced index %d\n", replace_idx);
