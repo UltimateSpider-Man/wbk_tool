@@ -14,12 +14,70 @@
 #include "adpcm1.h"
 #include "adpcm2.h"
 
+#include <unordered_map>
 
 // ------
 struct string_hash {
     int hash;
     string_hash(int h) : hash(h) {}
+    static constexpr inline std::uint32_t to_hash(const char* str) {
+        std::uint32_t res = 0;
+
+        for (int c = *str; c != '\0'; ++str, c = *str) {
+            int ch_lower = [](auto c) -> int {
+                if (isalpha(c))
+                    return tolower(c);
+                return c;
+                }(c);
+            res = ch_lower + 33 * res;
+        }
+
+        return res;
+    }
 };
+
+static inline void skip_newlines(std::string& s) {
+    while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
+}
+
+static const std::unordered_map<uint32_t, std::string>& get_string_hash_dictionary() {
+    static std::unordered_map<uint32_t, std::string> dict;
+    static std::once_flag loaded_once;
+    std::call_once(loaded_once, [] {
+        std::ifstream in("string_hash_dictionary.txt");
+        if (!in) return;
+        std::string line;
+        std::getline(in, line); std::getline(in, line); std::getline(in, line); // skip first 3 lines
+        while (std::getline(in, line)) {
+            skip_newlines(line);
+            if (line.empty()) continue;
+
+            const auto tab_pos = line.find('\t');
+            if (tab_pos == std::string::npos) continue;
+
+            const std::string_view prefix(line.c_str(), tab_pos);
+            if (prefix.size() < 3 || prefix[0] != '0' || (prefix[1] != 'x' && prefix[1] != 'X')) continue;
+
+            uint32_t key = 0;
+            const char* first = line.c_str() + 2;
+            const char* last = line.c_str() + tab_pos; // up to tab
+            auto res = std::from_chars(first, last, key, 16);
+            if (res.ec != std::errc() || res.ptr != last) continue;
+
+            std::string value = line.substr(tab_pos + 1);
+            skip_newlines(value);
+            dict.emplace(key, std::move(value));
+        }
+        });
+    return dict;
+}
+
+std::string lookup_string_by_hash(uint32_t hash) {
+    const auto& dict = get_string_hash_dictionary();
+    if (auto it = dict.find(hash); it != dict.end())
+        return it->second;
+    return {};
+}
 // ------
 
 class WBK {
